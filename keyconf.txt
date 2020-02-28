@@ -1,0 +1,5 @@
+AddKeySection "Respawn Keys" RKeys
+
+AddMenuKey "Place Beacon" PlaceBeacon
+Alias PlaceBeacon "netevent PlaceBeacon"
+DefaultBind V PlaceBeacon

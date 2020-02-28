@@ -1,0 +1,450 @@
+version "2.4"
+
+class SaveHandler : EventHandler
+{
+	const BEACON_PRICE = 10000;
+	
+	private bool bInDeathSequence;
+	private Array<Actor> toRespawn;
+	private PlayerPawn realPlayers[MAXPLAYERS];
+	private DroppedItems playerDrops[MAXPLAYERS];
+	private SpawnBeacon playerBeacons[MAXPLAYERS];
+	private uint droppedSouls[MAXPLAYERS];
+	private uint souls[MAXPLAYERS];
+	ui HUDFont soulsFont;
+	
+	// Why do I have to do this ???????
+	private uint FindPlayer(in PlayerInfo player)
+	{
+		uint i = 0;
+		for (; i < MAXPLAYERS; ++i)
+		{
+			if (players[i] == player)
+				break;
+		}
+		
+		return i;
+	}
+	
+	void RetrieveSouls(in PlayerInfo player)
+	{
+		uint index = FindPlayer(player);
+		
+		if (index < players.Size())
+		{
+			souls[index] = droppedSouls[index];
+			droppedSouls[index] = 0;
+		}
+	}
+	
+	override void PlayerEntered(PlayerEvent e)
+	{
+		let mo = players[e.playerNumber].mo;
+		if (mo)
+		{
+			realPlayers[e.playerNumber] = mo;
+			mo.spawnPoint = mo.pos;
+			mo.spawnAngle = mo.angle;
+		}
+	}
+	
+	override void PlayerDied(PlayerEvent e)
+	{
+		if (!bInDeathSequence)
+		{
+			bInDeathSequence = true;
+			for (uint i = 0; i < players.Size(); ++i)
+			{
+				if (playerInGame[i] && players[i].mo)
+					players[i].mo.DamageMobj(null, null, Actor.TELEFRAG_DAMAGE, "Telefrag");
+			}
+			bInDeathSequence = false;
+		}
+		
+		let mo = players[e.playerNumber].mo;
+		if (mo)
+		{
+			let items = DroppedItems(Actor.Spawn("DroppedItems", mo.pos));
+			if (items)
+			{
+				items.SetPlayer(players[e.playerNumber]);
+				items.GrabItems();
+				items.vel.z = 10 * items.GetGravity();
+				if (playerDrops[e.playerNumber])
+					playerDrops[e.playerNumber].Destroy();
+				
+				playerDrops[e.playerNumber] = items;
+				droppedSouls[e.playerNumber] = souls[e.PlayerNumber];
+				souls[e.PlayerNumber] = 0;
+			}
+		}
+	}
+	
+	override void RenderOverlay(RenderEvent e)
+	{
+		if (!soulsFont)
+		{
+			Font fnt = "BIGUPPER";
+			soulsFont = HUDFont.Create(fnt, fnt.GetCharWidth("0"), Mono_CellLeft);
+		}
+		
+		statusBar.DrawString(soulsFont, String.Format("%u", souls[consoleplayer]), (0,0), scale: (0.5,0.5));
+	}
+	
+	override void WorldThingDied(WorldEvent e)
+	{
+		if (e.thing && e.thing.bIsMonster && e.thing.target && e.thing.target.player)
+		{
+			uint index = FindPlayer(e.thing.target.player);
+			if (index < players.Size())
+				souls[index] += e.thing.GetSpawnHealth();
+			
+			toRespawn.Push(e.thing);
+		}
+	}
+	
+	override bool InputProcess(InputEvent e)
+	{
+		let mo = players[consoleplayer].mo;
+		if (mo && mo.health > 0)
+			return false;
+		
+		if (mo is "PlayerChunk" && !realPlayers[consoleplayer])
+			return false;
+		
+		int key1, key2;
+		[key1, key2] = Bindings.GetKeysForCommand("+use");
+		if ((key1 && key1 == e.keyScan) || (key2 && key2 == e.keyScan))
+		{
+			EventHandler.SendNetworkEvent("RespawnPlayer");
+			return true;
+		}
+		
+		return false;
+	}
+	
+	override void NetworkProcess(ConsoleEvent e)
+	{
+		if (e.name ~== "PlaceBeacon")
+		{
+			PlayerInfo player = players[e.player];
+			if (!player || !player.mo || player.mo.health <= 0)
+				return;
+			
+			if (!(player.mo.pos.z ~== player.mo.floorz))
+			{
+				Console.printf("You must be on the ground to spawn this");
+				return;
+			}
+			
+			let sec = player.mo.CurSector;
+			if (sec.damageAmount > 0)
+			{
+				Console.printf("You must find safer ground first");
+				return;
+			}
+			
+			int delta = sec.ceilingPlane.ZAtPoint(player.mo.pos.xy) - sec.floorPlane.ZAtPoint(player.mo.pos.xy);
+			if (delta < player.mo.default.height)
+			{
+				Console.printf("This area is too small to spawn this");
+				return;
+			}
+			
+			if (souls[e.player] < BEACON_PRICE)
+			{
+				uint amount = BEACON_PRICE - souls[e.player];
+				string aid;
+				if (amount == 1)
+					aid = String.Format("You need %u more soul to spawn this", amount);
+				else
+					aid = String.Format("You need %u more souls to spawn this", amount);
+				
+				Console.printf("%s", aid);
+				return;
+			}
+			
+			let beacon = SpawnBeacon(Actor.Spawn("SpawnBeacon", player.mo.pos));
+			if (beacon)
+			{
+				player.mo.spawnAngle = player.mo.angle;
+				if (playerBeacons[e.player])
+					playerBeacons[e.player].Destroy();
+				
+				playerBeacons[e.player] = beacon;
+				souls[e.player] -= BEACON_PRICE;
+				toRespawn.Clear();
+			}
+		}
+		
+		if (e.isManual)
+			return;
+		
+		if (e.name ~== "RespawnPlayer")
+		{
+			PlayerInfo player = players[e.player];
+			if (player)
+			{
+				if (player.mo is "PlayerChunk" && realPlayers[e.player])
+				{
+					let chunk = player.mo;
+					chunk.player = null;
+					player.mo = realPlayers[e.player];
+					player.mo.player = player;
+					player.mo.ObtainInventory(chunk);
+					player.mo.health = chunk.health;
+					player.mo.angle = chunk.angle;
+					
+					for (uint i = 0; i < players.Size(); ++i)
+					{
+						if (playerInGame[i] && players[i].camera == chunk)
+							players[i].camera = player.mo;
+					}
+				}
+				
+				player.damagecount = 0;
+				player.poisoncount = 0;
+				player.Resurrect();
+				
+				let mo = player.mo;
+				if (mo)
+				{
+					if (playerBeacons[e.player])
+					{
+						let sec = playerBeacons[e.player].CurSector;
+						int delta = sec.ceilingPlane.ZAtPoint(playerBeacons[e.player].pos.xy) - sec.floorPlane.ZAtPoint(playerBeacons[e.player].pos.xy);
+						if (delta < mo.default.height)
+							mo.Teleport(mo.spawnPoint, mo.spawnAngle, TELF_DESTFOG);
+						else
+							mo.Teleport(playerBeacons[e.player].pos, mo.spawnAngle, TELF_DESTFOG);
+					}
+					else
+						mo.Teleport(mo.spawnPoint, mo.spawnAngle, TELF_DESTFOG);
+					
+					mo.TakeInventory("BasicArmor", mo.CountInv("BasicArmor"));
+					let hex = HexenArmor(mo.FindInventory("HexenArmor"));
+					if (hex)
+					{
+						for (uint i = 0; i < hex.slotsIncrement.Size(); ++i)
+						{
+							hex.slots[i] = 0;
+							hex.slotsIncrement[i] = 0;
+						}
+					}
+				}
+				
+				ThinkerIterator it = ThinkerIterator.Create("Actor", Thinker.STAT_DEFAULT);
+				Actor mon;
+				while (mon = Actor(it.Next()))
+				{
+					if (mon && mon.bIsMonster && mon.health > 0)
+					{
+						mon.target = null;
+						mon.health = mon.GetSpawnHealth();
+						mon.SetOrigin(mon.spawnPoint, false);
+						mon.angle = mon.spawnAngle;
+					}
+				}
+				
+				for (uint i = 0; i < toRespawn.Size(); ++i)
+				{
+					if (toRespawn[i] && toRespawn[i].bIsMonster)
+					{
+						toRespawn[i].A_Respawn(RSF_TELEFRAG);
+						toRespawn[i].SetOrigin(toRespawn[i].spawnPoint, false);
+						toRespawn[i].angle = toRespawn[i].spawnAngle;
+					}
+				}
+				toRespawn.Clear();
+			}
+		}
+	}
+}
+
+class SpawnBeacon : TechLamp
+{
+	Default
+	{
+		+MOVEWITHSECTOR
+		+NOBLOCKMAP
+		-SOLID
+	}
+}
+
+class DroppedItems : Inventory
+{
+	static const class<Inventory> ignore[] =
+	{
+		"BackpackItem", "Key", "PuzzleItem", "Health", "Armor", "Powerup", "DummyStrifeItem", "QuestItem",
+		"WeaponHolder", "Weapon"
+	};
+	
+	private PlayerInfo attachedPlayer;
+	private Array<Inventory> items;
+	private Array<class<Inventory> > dropItems;
+	private Array<int> dropAmounts;
+	private uint souls;
+	
+	Default
+	{
+		Height 26;
+		Inventory.PickupMessage "Items recovered";
+		
+		+INVENTORY.ALWAYSPICKUP
+	}
+	
+	States
+	{
+		Spawn:
+			BPAK A -1;
+			Stop;
+	}
+	
+	override void Tick()
+	{
+		super.Tick();
+		
+		if (!attachedPlayer || !attachedPlayer.mo)
+			Destroy();
+	}
+	
+	override void Touch(Actor toucher)
+	{
+		if (toucher.player != attachedPlayer)
+			return;
+		
+		super.Touch(toucher);
+	}
+	
+	override void AttachToOwner(Actor other)
+	{
+		super.AttachToOwner(other);
+		
+		if (owner)
+		{
+			for (uint i = 0; i < items.Size(); ++i)
+			{
+				if (items[i])
+				{
+					let item = owner.FindInventory(items[i].GetClass());
+					if (item)
+						item.HandlePickup(items[i]);
+					else
+						items[i].AttachToOwner(owner);
+				}
+			}
+			
+			if (owner.player)
+				owner.player.PendingWeapon = WP_NOCHANGE;
+		}
+		
+		let save = SaveHandler(EventHandler.Find("SaveHandler"));
+		if (save)
+			save.RetrieveSouls(attachedPlayer);
+		
+		Destroy();
+	}
+	
+	void SetPlayer(in PlayerInfo player)
+	{
+		if (player)
+			attachedPlayer = player;
+	}
+	
+	void GrabItems()
+	{
+		if (!attachedPlayer || !attachedPlayer.mo)
+			return;
+		
+		let mo = attachedPlayer.mo;
+		
+		let di = mo.GetDropItems();
+		while (di)
+		{
+			dropItems.Push((class<Inventory>)(di.Name));
+			dropAmounts.Push(di.amount);
+			di = di.next;
+		}
+			
+		for (let probe = mo.inv; probe != null;)
+		{
+			if (probe)
+			{
+				let next = probe.inv;
+					
+				class<Inventory> type = (class<Inventory>)(probe.GetClass());
+					
+				if (probe.bUndroppable || !probe.CanPickUp(self) || CheckIgnore(type))
+				{
+					probe = next;
+					continue;
+				}
+					
+				bool drop;
+				int index;
+				int dropAmount = -1;
+				[drop, index] = CheckDropItem(type);
+				if (drop && index >= 0 && index < dropAmounts.Size())
+				{
+					dropAmount = probe.amount - dropAmounts[index];
+					if (dropAmount <= 0)
+					{
+						probe.amount = dropAmounts[index];
+						probe = next;
+						continue;
+					}
+				}
+				else if (probe is "Ammo")
+				{
+					dropAmount = probe.amount - probe.default.amount*5;
+					if (dropAmount <= 0)
+					{
+						probe.amount = probe.default.amount*5;
+						probe = next;
+						continue;
+					}
+				}
+					
+				let item = probe.CreateTossable(dropAmount > -1 ? dropAmount : probe.amount);
+				if (item)
+				{
+					item.AttachToOwner(self);
+					if (probe is "HealthPickup")
+					{
+						item.amount += probe.amount;
+						probe.amount = 0;
+					}
+					
+					items.Push(item);
+					
+					if (!probe.amount)
+						probe.Destroy();
+				}
+					
+				probe = next;
+			}
+		}
+	}
+	
+	private bool, int CheckDropItem(class<Inventory> item)
+	{
+		for (uint i = 0; i < dropItems.Size(); ++i)
+		{
+			if (item == dropItems[i])
+				return true, i;
+		}
+		
+		return false, -1;
+	}
+	
+	private bool CheckIgnore(class<Inventory> item)
+	{
+		for (uint i = 0; i < ignore.Size(); ++i)
+		{
+			if (item is ignore[i])
+				return true;
+		}
+		
+		return false;
+	}
+}
