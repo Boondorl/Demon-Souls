@@ -174,6 +174,8 @@ class SaveHandler : EventHandler
 				playerBeacons[e.player] = beacon;
 				souls[e.player] -= BEACON_PRICE;
 				toRespawn.Clear();
+				
+				Console.printf("Progress saved");
 			}
 		}
 		

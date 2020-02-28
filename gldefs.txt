@@ -1,0 +1,28 @@
+// Spawn Beacon
+pulselight BIGLAMP2
+{
+    color 0.8 0.8 1.0
+    size 96
+    secondarySize 99
+    interval 0.4
+    offset 0 72 0
+	attenuate 1
+}
+
+object SpawnBeacon
+{
+    frame TLMP { light BIGLAMP2 }
+}
+
+// Dropped Items
+pointlight DROP
+{
+    color 1.0 0.7 0.4
+    size 96
+	attenuate 1
+}
+
+object DroppedItems
+{
+    frame BPAKA { light DROP }
+}
