@@ -41,7 +41,7 @@ class SoulHandler : StaticEventHandler
 	private uint souls[MAXPLAYERS];
 	private int playerDropLevels[MAXPLAYERS];
 	private int playerBeaconLevels[MAXPLAYERS];
-	private uint curMonster;
+	uint curMonster;
 	MonsterInfo toRespawn[MAX_MONSTERS];
 	
 	override void WorldLoaded(WorldEvent e)
@@ -97,6 +97,8 @@ class SoulHandler : StaticEventHandler
 			
 			for (uint i = 0; i < MAX_MONSTERS; ++i)
 				sh.toRespawn[i].Copy(toRespawn[i]);
+			
+			sh.curMonster = curMonster;
 		}
 		else
 		{
@@ -108,6 +110,8 @@ class SoulHandler : StaticEventHandler
 			
 			for (uint i = 0; i < MAX_MONSTERS; ++i)
 				toRespawn[i].Copy(sh.toRespawn[i]);
+			
+			curMonster = sh.curMonster;
 		}
 	}
 	
@@ -135,7 +139,7 @@ class SaveHandler : EventHandler
 	const BEACON_PRICE = 10000;
 	const MAX_MONSTERS = 32768;
 	
-	private uint curMonster;
+	uint curMonster;
 	MonsterInfo toRespawn[MAX_MONSTERS];
 	private bool bInDeathSequence;
 	private PlayerPawn realPlayers[MAXPLAYERS];
@@ -208,6 +212,8 @@ class SaveHandler : EventHandler
 			
 			for (uint i = 0; i < MAX_MONSTERS; ++i)
 				sh.toRespawn[i].Copy(toRespawn[i]);
+			
+			sh.curMonster = curMonster;
 		}
 	}
 	
@@ -416,6 +422,8 @@ class SaveHandler : EventHandler
 				
 				for (uint i = 0; i < MAX_MONSTERS; ++i)
 					toRespawn[i].Clear();
+				
+				curMonster = 0;
 				
 				Console.printf("Progress saved");
 			}
