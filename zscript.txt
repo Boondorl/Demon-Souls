@@ -52,6 +52,9 @@ class SoulHandler : StaticEventHandler
 		
 		if (!e.isSaveGame)
 		{
+			ThinkerIterator it = ThinkerIterator.Create("Actor", Thinker.STAT_DEFAULT);
+			Actor old;
+			
 			for (uint i = 0; i < MAX_MONSTERS; ++i)
 			{
 				if (toRespawn[i].bNeedsToRespawn && toRespawn[i].spawnClass && level.levelNum == toRespawn[i].level)
@@ -69,6 +72,25 @@ class SoulHandler : StaticEventHandler
 						{
 							mo.bAmbush = toRespawn[i].bAmbush;
 							mo.angle = toRespawn[i].angle;
+							
+							while (old = Actor(it.Next()))
+							{
+								if (old && old.health <= 0 &&
+									old.GetClass() == toRespawn[i].spawnClass &&
+									old.spawnPoint == toRespawn[i].pos)
+								{
+									if (old.CountsAsKill())
+									{
+										--level.total_monsters;
+										--level.killed_monsters;
+									}
+									
+									old.Destroy();
+									break;
+								}
+							}
+							
+							it.Reinit();
 						}
 					}
 								
@@ -312,7 +334,7 @@ class SaveHandler : EventHandler
 	
 	override void WorldThingDied(WorldEvent e)
 	{
-		if (e.thing && e.thing.bIsMonster && e.thing.target && e.thing.target.player)
+		if (e.thing && e.thing.bIsMonster && !e.thing.bFriendly && e.thing.target && e.thing.target.player)
 		{
 			uint index = FindPlayer(e.thing.target.player);
 			if (index < players.Size())
@@ -332,6 +354,33 @@ class SaveHandler : EventHandler
 			++curMonster;
 			if (curMonster >= MAX_MONSTERS)
 				curMonster = 0;
+		}
+	}
+	
+	override void WorldThingRevived(WorldEvent e)
+	{
+		if (e.thing && e.thing.bIsMonster && !e.thing.bFriendly)
+		{
+			for (uint i = 0; i < MAX_MONSTERS; ++i)
+			{
+				if (!toRespawn[i].spawnClass || toRespawn[i].level != level.levelNum)
+					continue;
+				
+				if (toRespawn[i].mo)
+				{
+					if (toRespawn[i].mo == e.thing)
+					{
+						toRespawn[i].Clear();
+						break;
+					}
+				}
+				else if (toRespawn[i].spawnClass == e.thing.GetClass() &&
+						 toRespawn[i].pos == e.thing.spawnPoint)
+				{
+					toRespawn[i].Clear();
+					break;
+				}
+			}
 		}
 	}
 	
@@ -574,6 +623,7 @@ class DroppedItems : Inventory
 		Height 26;
 		Inventory.PickupMessage "Items recovered";
 		
+		+DONTGIB
 		+INVENTORY.ALWAYSPICKUP
 	}
 	
