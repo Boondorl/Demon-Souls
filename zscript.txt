@@ -1,5 +1,38 @@
 version "2.4"
 
+class SoulHandler : StaticEventHandler
+{
+	private uint droppedSouls[MAXPLAYERS];
+	private uint souls[MAXPLAYERS];
+	
+	override void WorldLoaded(WorldEvent e)
+	{
+		let sh = SaveHandler(EventHandler.Find("SaveHandler"));
+		if (!sh)
+			return;
+		
+		if (!e.isSaveGame)
+		{
+			for (uint i = 0; i < MAXPLAYERS; ++i)
+				sh.UpdateSouls(i, souls[i], droppedSouls[i]);
+		}
+		else
+		{
+			for (uint i = 0; i < MAXPLAYERS; ++i)
+				UpdateSouls(i, sh.GetSouls(i), sh.GetDroppedSouls(i));
+		}
+	}
+	
+	void UpdateSouls(uint index, uint otherSouls, uint otherDroppedSouls)
+	{
+		if (index >= MAXPLAYERS)
+			return;
+		
+		souls[index] = otherSouls;
+		droppedSouls[index] = otherDroppedSouls;
+	}
+}
+
 class SaveHandler : EventHandler
 {
 	const BEACON_PRICE = 10000;
@@ -11,7 +44,32 @@ class SaveHandler : EventHandler
 	private SpawnBeacon playerBeacons[MAXPLAYERS];
 	private uint droppedSouls[MAXPLAYERS];
 	private uint souls[MAXPLAYERS];
-	ui HUDFont soulsFont;
+	transient ui HUDFont soulsFont;
+	
+	uint GetSouls(uint index)
+	{
+		if (index >= MAXPLAYERS)
+			return 0;
+		
+		return souls[index];
+	}
+	
+	uint GetDroppedSouls(uint index)
+	{
+		if (index >= MAXPLAYERS)
+			return 0;
+		
+		return droppedSouls[index];
+	}
+	
+	void UpdateSouls(uint index, uint otherSouls, uint otherDroppedSouls)
+	{
+		if (index >= MAXPLAYERS)
+			return;
+		
+		souls[index] = otherSouls;
+		droppedSouls[index] = otherDroppedSouls;
+	}
 	
 	// Why do I have to do this ???????
 	private uint FindPlayer(in PlayerInfo player)
@@ -34,6 +92,10 @@ class SaveHandler : EventHandler
 		{
 			souls[index] = droppedSouls[index];
 			droppedSouls[index] = 0;
+			
+			let sh = SoulHandler(StaticEventHandler.Find("SoulHandler"));
+			if (sh)
+				sh.UpdateSouls(index, souls[index], droppedSouls[index]);
 		}
 	}
 	
@@ -76,6 +138,10 @@ class SaveHandler : EventHandler
 				playerDrops[e.playerNumber] = items;
 				droppedSouls[e.playerNumber] = souls[e.PlayerNumber];
 				souls[e.PlayerNumber] = 0;
+				
+				let sh = SoulHandler(StaticEventHandler.Find("SoulHandler"));
+				if (sh)
+					sh.UpdateSouls(e.PlayerNumber, souls[e.PlayerNumber], droppedSouls[e.PlayerNumber]);
 			}
 		}
 	}
@@ -97,7 +163,12 @@ class SaveHandler : EventHandler
 		{
 			uint index = FindPlayer(e.thing.target.player);
 			if (index < players.Size())
+			{
 				souls[index] += e.thing.GetSpawnHealth();
+				let sh = SoulHandler(StaticEventHandler.Find("SoulHandler"));
+				if (sh)
+					sh.UpdateSouls(index, souls[index], droppedSouls[index]);
+			}
 			
 			toRespawn.Push(e.thing);
 		}
@@ -176,6 +247,10 @@ class SaveHandler : EventHandler
 				toRespawn.Clear();
 				
 				Console.printf("Progress saved");
+				
+				let sh = SoulHandler(StaticEventHandler.Find("SoulHandler"));
+				if (sh)
+					sh.UpdateSouls(e.player, souls[e.player], droppedSouls[e.player]);
 			}
 		}
 		
