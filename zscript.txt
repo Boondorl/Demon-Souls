@@ -470,9 +470,10 @@ class SaveHandler : EventHandler
 				souls[e.player] -= BEACON_PRICE;
 				
 				for (uint i = 0; i < MAX_MONSTERS; ++i)
-					toRespawn[i].Clear();
-				
-				curMonster = 0;
+				{
+					if (!toRespawn[i].bNeedsToRespawn)
+						toRespawn[i].Clear();
+				}
 				
 				Console.printf("Progress saved");
 			}
