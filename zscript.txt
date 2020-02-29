@@ -1,9 +1,48 @@
 version "2.4"
 
+struct MonsterInfo
+{
+	Actor mo;
+	class<Actor> spawnClass;
+	Vector3 pos;
+	double angle;
+	bool bAmbush;
+	int level;
+	bool bNeedsToRespawn;
+	
+	void Clear()
+	{
+		mo = null;
+		spawnClass = null;
+		pos = (0,0,0);
+		angle = 0;
+		bAmbush = false;
+		level = 0;
+		bNeedsToRespawn = false;
+	}
+	
+	void Copy(in MonsterInfo other)
+	{
+		mo = other.mo;
+		spawnClass = other.spawnClass;
+		pos = other.pos;
+		angle = other.angle;
+		bAmbush = other.bAmbush;
+		level = other.level;
+		bNeedsToRespawn = other.bNeedsToRespawn;
+	}
+}
+
 class SoulHandler : StaticEventHandler
 {
+	const MAX_MONSTERS = 32768;
+	
 	private uint droppedSouls[MAXPLAYERS];
 	private uint souls[MAXPLAYERS];
+	private int playerDropLevels[MAXPLAYERS];
+	private int playerBeaconLevels[MAXPLAYERS];
+	private uint curMonster;
+	MonsterInfo toRespawn[MAX_MONSTERS];
 	
 	override void WorldLoaded(WorldEvent e)
 	{
@@ -13,14 +52,72 @@ class SoulHandler : StaticEventHandler
 		
 		if (!e.isSaveGame)
 		{
+			for (uint i = 0; i < MAX_MONSTERS; ++i)
+			{
+				if (toRespawn[i].bNeedsToRespawn && toRespawn[i].spawnClass && level.levelNum == toRespawn[i].level)
+				{
+					if (toRespawn[i].mo)
+					{
+						toRespawn[i].mo.A_Respawn(RSF_TELEFRAG);
+						toRespawn[i].mo.SetOrigin(toRespawn[i].pos, false);
+						toRespawn[i].mo.angle = toRespawn[i].angle;
+					}
+					else
+					{
+						let mo = Actor.Spawn(toRespawn[i].spawnClass, toRespawn[i].pos);
+						if (mo)
+						{
+							mo.bAmbush = toRespawn[i].bAmbush;
+							mo.angle = toRespawn[i].angle;
+						}
+					}
+								
+					toRespawn[i].Clear();
+				}
+			}
+		
 			for (uint i = 0; i < MAXPLAYERS; ++i)
+			{
 				sh.UpdateSouls(i, souls[i], droppedSouls[i]);
+				sh.UpdateItemsAndBeacons(i, playerDropLevels[i], playerBeaconLevels[i]);
+				
+				if (!playerInGame[i])
+					continue;
+				
+				// Check for drops from a different level
+				
+				let items = sh.FindItems(players[i]);
+				if (items && level.levelNum != playerDropLevels[i])
+					items.Destroy();
+				
+				let beacon = sh.FindBeacon(players[i]);
+				if (beacon && level.levelNum != playerBeaconLevels[i])
+					beacon.Destroy();
+			}
+			
+			for (uint i = 0; i < MAX_MONSTERS; ++i)
+				sh.toRespawn[i].Copy(toRespawn[i]);
 		}
 		else
 		{
 			for (uint i = 0; i < MAXPLAYERS; ++i)
+			{
 				UpdateSouls(i, sh.GetSouls(i), sh.GetDroppedSouls(i));
+				UpdateItemsAndBeacons(i, sh.GetItemLevel(i), sh.GetBeaconLevel(i));
+			}
+			
+			for (uint i = 0; i < MAX_MONSTERS; ++i)
+				toRespawn[i].Copy(sh.toRespawn[i]);
 		}
+	}
+	
+	void UpdateItemsAndBeacons(uint index, int itemLevel, int beaconLevel)
+	{
+		if (index >= MAXPLAYERS)
+			return;
+		
+		playerDropLevels[index] = itemLevel;
+		playerBeaconLevels[index] = beaconLevel;
 	}
 	
 	void UpdateSouls(uint index, uint otherSouls, uint otherDroppedSouls)
@@ -36,14 +133,16 @@ class SoulHandler : StaticEventHandler
 class SaveHandler : EventHandler
 {
 	const BEACON_PRICE = 10000;
+	const MAX_MONSTERS = 32768;
 	
+	private uint curMonster;
+	MonsterInfo toRespawn[MAX_MONSTERS];
 	private bool bInDeathSequence;
-	private Array<Actor> toRespawn;
 	private PlayerPawn realPlayers[MAXPLAYERS];
-	private DroppedItems playerDrops[MAXPLAYERS];
-	private SpawnBeacon playerBeacons[MAXPLAYERS];
 	private uint droppedSouls[MAXPLAYERS];
 	private uint souls[MAXPLAYERS];
+	private int playerDropLevels[MAXPLAYERS];
+	private int playerBeaconLevels[MAXPLAYERS];
 	transient ui HUDFont soulsFont;
 	
 	uint GetSouls(uint index)
@@ -71,6 +170,47 @@ class SaveHandler : EventHandler
 		droppedSouls[index] = otherDroppedSouls;
 	}
 	
+	int GetItemLevel(uint index)
+	{
+		if (index >= MAXPLAYERS)
+			return 0;
+		
+		return playerDropLevels[index];
+	}
+	
+	int GetBeaconLevel(uint index)
+	{
+		if (index >= MAXPLAYERS)
+			return 0;
+		
+		return playerBeaconLevels[index];
+	}
+	
+	void UpdateItemsAndBeacons(uint index, int itemLevel, int beaconLevel)
+	{
+		if (index >= MAXPLAYERS)
+			return;
+		
+		playerDropLevels[index] = itemLevel;
+		playerBeaconLevels[index] = beaconLevel;
+	}
+	
+	override void WorldUnloaded(WorldEvent e)
+	{
+		let sh = SoulHandler(StaticEventHandler.Find("SoulHandler"));
+		if (sh)
+		{
+			for (uint i = 0; i < MAXPLAYERS; ++i)
+			{
+				sh.UpdateSouls(i, souls[i], droppedSouls[i]);
+				sh.UpdateItemsAndBeacons(i, playerDropLevels[i], playerBeaconLevels[i]);
+			}
+			
+			for (uint i = 0; i < MAX_MONSTERS; ++i)
+				sh.toRespawn[i].Copy(toRespawn[i]);
+		}
+	}
+	
 	// Why do I have to do this ???????
 	private uint FindPlayer(in PlayerInfo player)
 	{
@@ -92,10 +232,6 @@ class SaveHandler : EventHandler
 		{
 			souls[index] = droppedSouls[index];
 			droppedSouls[index] = 0;
-			
-			let sh = SoulHandler(StaticEventHandler.Find("SoulHandler"));
-			if (sh)
-				sh.UpdateSouls(index, souls[index], droppedSouls[index]);
 		}
 	}
 	
@@ -129,21 +265,32 @@ class SaveHandler : EventHandler
 			let items = DroppedItems(Actor.Spawn("DroppedItems", mo.pos));
 			if (items)
 			{
+				let old = FindItems(players[e.playerNumber]);
+				if (old)
+					old.Destroy();
+				
 				items.SetPlayer(players[e.playerNumber]);
 				items.GrabItems();
 				items.vel.z = 10 * items.GetGravity();
-				if (playerDrops[e.playerNumber])
-					playerDrops[e.playerNumber].Destroy();
 				
-				playerDrops[e.playerNumber] = items;
+				playerDropLevels[e.playerNumber] = level.levelNum;
 				droppedSouls[e.playerNumber] = souls[e.PlayerNumber];
 				souls[e.PlayerNumber] = 0;
-				
-				let sh = SoulHandler(StaticEventHandler.Find("SoulHandler"));
-				if (sh)
-					sh.UpdateSouls(e.PlayerNumber, souls[e.PlayerNumber], droppedSouls[e.PlayerNumber]);
 			}
 		}
+	}
+	
+	DroppedItems FindItems(in PlayerInfo player)
+	{
+		ThinkerIterator it = ThinkerIterator.Create("DroppedItems", Thinker.STAT_DEFAULT);
+		DroppedItems mo;
+		while (mo = DroppedItems(it.Next()))
+		{
+			if (mo && mo.GetPlayer() == player)
+				return mo;
+		}
+		
+		return null;
 	}
 	
 	override void RenderOverlay(RenderEvent e)
@@ -163,14 +310,22 @@ class SaveHandler : EventHandler
 		{
 			uint index = FindPlayer(e.thing.target.player);
 			if (index < players.Size())
-			{
 				souls[index] += e.thing.GetSpawnHealth();
-				let sh = SoulHandler(StaticEventHandler.Find("SoulHandler"));
-				if (sh)
-					sh.UpdateSouls(index, souls[index], droppedSouls[index]);
-			}
 			
-			toRespawn.Push(e.thing);
+			// Don't respawn new things
+			if (e.thing.GetAge() < level.maptime)
+				return;
+			
+			toRespawn[curMonster].mo = e.thing;
+			toRespawn[curMonster].spawnClass = e.thing.GetClass();
+			toRespawn[curMonster].pos = e.thing.spawnPoint;
+			toRespawn[curMonster].angle = e.thing.spawnAngle;
+			toRespawn[curMonster].bAmbush = e.thing.bAmbush;
+			toRespawn[curMonster].level = level.levelNum;
+			
+			++curMonster;
+			if (curMonster >= MAX_MONSTERS)
+				curMonster = 0;
 		}
 	}
 	
@@ -192,6 +347,19 @@ class SaveHandler : EventHandler
 		}
 		
 		return false;
+	}
+	
+	SpawnBeacon FindBeacon(in PlayerInfo player)
+	{
+		ThinkerIterator it = ThinkerIterator.Create("SpawnBeacon", Thinker.STAT_DEFAULT);
+		SpawnBeacon mo;
+		while (mo = SpawnBeacon(it.Next()))
+		{
+			if (mo && mo.GetPlayer() == player)
+				return mo;
+		}
+		
+		return null;
 	}
 	
 	override void NetworkProcess(ConsoleEvent e)
@@ -239,18 +407,17 @@ class SaveHandler : EventHandler
 			if (beacon)
 			{
 				player.mo.spawnAngle = player.mo.angle;
-				if (playerBeacons[e.player])
-					playerBeacons[e.player].Destroy();
+				let old = FindBeacon(player);
+				if (old)
+					old.Destroy();
 				
-				playerBeacons[e.player] = beacon;
+				beacon.SetPlayer(player);
 				souls[e.player] -= BEACON_PRICE;
-				toRespawn.Clear();
+				
+				for (uint i = 0; i < MAX_MONSTERS; ++i)
+					toRespawn[i].Clear();
 				
 				Console.printf("Progress saved");
-				
-				let sh = SoulHandler(StaticEventHandler.Find("SoulHandler"));
-				if (sh)
-					sh.UpdateSouls(e.player, souls[e.player], droppedSouls[e.player]);
 			}
 		}
 		
@@ -286,14 +453,15 @@ class SaveHandler : EventHandler
 				let mo = player.mo;
 				if (mo)
 				{
-					if (playerBeacons[e.player])
+					let bc = FindBeacon(player);
+					if (bc)
 					{
-						let sec = playerBeacons[e.player].CurSector;
-						int delta = sec.ceilingPlane.ZAtPoint(playerBeacons[e.player].pos.xy) - sec.floorPlane.ZAtPoint(playerBeacons[e.player].pos.xy);
+						let sec = bc.CurSector;
+						int delta = sec.ceilingPlane.ZAtPoint(bc.pos.xy) - sec.floorPlane.ZAtPoint(bc.pos.xy);
 						if (delta < mo.default.height)
 							mo.Teleport(mo.spawnPoint, mo.spawnAngle, TELF_DESTFOG);
 						else
-							mo.Teleport(playerBeacons[e.player].pos, mo.spawnAngle, TELF_DESTFOG);
+							mo.Teleport(bc.pos, mo.spawnAngle, TELF_DESTFOG);
 					}
 					else
 						mo.Teleport(mo.spawnPoint, mo.spawnAngle, TELF_DESTFOG);
@@ -325,14 +493,32 @@ class SaveHandler : EventHandler
 				
 				for (uint i = 0; i < toRespawn.Size(); ++i)
 				{
-					if (toRespawn[i] && toRespawn[i].bIsMonster)
+					if (toRespawn[i].spawnClass)
 					{
-						toRespawn[i].A_Respawn(RSF_TELEFRAG);
-						toRespawn[i].SetOrigin(toRespawn[i].spawnPoint, false);
-						toRespawn[i].angle = toRespawn[i].spawnAngle;
+						toRespawn[i].bNeedsToRespawn = true;
+						
+						if (level.levelNum == toRespawn[i].level)
+						{
+							if (toRespawn[i].mo)
+							{
+								toRespawn[i].mo.A_Respawn(RSF_TELEFRAG);
+								toRespawn[i].mo.SetOrigin(toRespawn[i].pos, false);
+								toRespawn[i].mo.angle = toRespawn[i].angle;
+							}
+							else
+							{
+								let mo = Actor.Spawn(toRespawn[i].spawnClass, toRespawn[i].pos);
+								if (mo)
+								{
+									mo.bAmbush = toRespawn[i].bAmbush;
+									mo.angle = toRespawn[i].angle;
+								}
+							}
+							
+							toRespawn[i].Clear();
+						}
 					}
 				}
-				toRespawn.Clear();
 			}
 		}
 	}
@@ -340,11 +526,24 @@ class SaveHandler : EventHandler
 
 class SpawnBeacon : TechLamp
 {
+	private PlayerInfo attachedPlayer;
+	
 	Default
 	{
 		+MOVEWITHSECTOR
 		+NOBLOCKMAP
 		-SOLID
+	}
+	
+	void SetPlayer(in PlayerInfo player)
+	{
+		if (player)
+			attachedPlayer = player;
+	}
+	
+	PlayerInfo GetPlayer()
+	{
+		return attachedPlayer;
 	}
 }
 
@@ -428,6 +627,11 @@ class DroppedItems : Inventory
 			attachedPlayer = player;
 	}
 	
+	PlayerInfo GetPlayer()
+	{
+		return attachedPlayer;
+	}
+	
 	void GrabItems()
 	{
 		if (!attachedPlayer || !attachedPlayer.mo)
@@ -473,10 +677,11 @@ class DroppedItems : Inventory
 				}
 				else if (probe is "Ammo")
 				{
-					dropAmount = probe.amount - probe.default.amount*5;
+					int spawnAmount = probe.maxAmount / 2;
+					dropAmount = probe.amount - spawnAmount;
 					if (dropAmount <= 0)
 					{
-						probe.amount = probe.default.amount*5;
+						probe.amount = spawnAmount;
 						probe = next;
 						continue;
 					}
