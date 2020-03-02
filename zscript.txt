@@ -361,6 +361,9 @@ class SaveHandler : EventHandler
 	{
 		if (e.thing && e.thing.bIsMonster && !e.thing.bFriendly)
 		{
+			if (e.thing.GetAge() < level.mapTime)
+				return;
+			
 			for (uint i = 0; i < MAX_MONSTERS; ++i)
 			{
 				if (!toRespawn[i].spawnClass || toRespawn[i].level != level.levelNum)
