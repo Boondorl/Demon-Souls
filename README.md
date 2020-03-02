@@ -1,5 +1,5 @@
 # Version
-Beta 1
+Beta 2
 
 Tested on GZDoom 4.3.3
 # Demon Souls
